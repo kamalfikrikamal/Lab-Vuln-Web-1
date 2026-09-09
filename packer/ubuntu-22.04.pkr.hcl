@@ -14,9 +14,14 @@ source "virtualbox-iso" "ubuntu2204" {
   # boot_command yang terbukti bekerja untuk ISO ubuntu-22.04.5-live-server
   # yang sama persis (rlaun/packer-ubuntu-22.04, builder qemu - mekanisme
   # keystroke GRUB sama untuk builder VM apa pun).
-  boot_wait = "5s"
+  # boot_wait dinaikkan jadi 15s (dari 5s) - dugaan kuat penyebab dua build
+  # sebelumnya gagal ("Timeout waiting for SSH" setelah 60 menit penuh) adalah
+  # keystroke "e" terkirim SEBELUM menu GRUB benar-benar tampil di layar VM,
+  # sehingga terlewat begitu saja dan VM malah boot ke installer interaktif
+  # biasa (yang tidak pernah menyalakan SSH dengan kredensial packer).
+  boot_wait = "15s"
   boot_command = [
-    "e<wait>",
+    "e<wait5s>",
     "<down><down><down>",
     "<end><bs><bs><bs><bs><wait>",
     "autoinstall ds=nocloud-net\\;s=http://{{.HTTPIP}}:{{.HTTPPort}}/ ---<wait>",
