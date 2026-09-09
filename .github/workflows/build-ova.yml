@@ -47,6 +47,21 @@ jobs:
           # Jika langkah berikut gagal, lihat catatan fallback di README.md.
           sudo modprobe vboxdrv || echo "PERINGATAN: modprobe vboxdrv gagal - build kemungkinan akan gagal di step packer build."
 
+      - name: Free hardware virtualization extension from KVM
+        run: |
+          # Runner GitHub Actions sudah memuat modul kvm (untuk nested-virt,
+          # mis. Android emulator) yang memegang ekstensi VT-x/AMD-V secara
+          # eksklusif - VirtualBox butuh ekstensi yang sama dan akan gagal
+          # start VM dengan error VERR_VMX_IN_USE/VERR_SVM_IN_USE kalau KVM
+          # tidak dilepas dulu. Kita tidak memakai KVM sama sekali di pipeline
+          # ini jadi aman untuk dilepas.
+          lsmod | grep -i kvm || echo "modul kvm tidak termuat"
+          sudo modprobe -r kvm_amd 2>/dev/null || true
+          sudo modprobe -r kvm_intel 2>/dev/null || true
+          sudo modprobe -r kvm 2>/dev/null || true
+          echo "Setelah dilepas:"
+          lsmod | grep -i kvm || echo "modul kvm sudah tidak termuat"
+
       - name: Install Packer
         uses: hashicorp/setup-packer@main
         with:
