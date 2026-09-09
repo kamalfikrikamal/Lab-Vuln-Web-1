@@ -6,23 +6,27 @@ source "virtualbox-iso" "ubuntu2204" {
 
   http_directory = "packer/http"
 
-  # Trigger autoinstall lewat konsol perintah GRUB (tekan "c" di menu GRUB
-  # untuk masuk mode command-line, lalu boot kernel/initrd secara manual
-  # dengan parameter autoinstall). Ini bagian paling rawan dari seluruh
-  # template - timing/keystroke sangat tergantung build ISO, kemungkinan
-  # perlu diiterasi ulang setelah dicoba langsung di CI.
+  # Trigger autoinstall dengan mengedit entri menu GRUB yang sudah ada
+  # (tekan "e", turun ke baris "linux", tambahkan parameter autoinstall di
+  # akhir baris, lalu F10 untuk boot). Ini menghindari harus menyusun ulang
+  # baris linux/initrd/boot dari nol secara manual (pendekatan mode konsol
+  # "c" yang lebih rawan salah/timeout). Referensi: dicocokkan dengan
+  # boot_command yang terbukti bekerja untuk ISO ubuntu-22.04.5-live-server
+  # yang sama persis (rlaun/packer-ubuntu-22.04, builder qemu - mekanisme
+  # keystroke GRUB sama untuk builder VM apa pun).
   boot_wait = "5s"
   boot_command = [
-    "c<wait3s>",
-    "linux /casper/vmlinuz --- autoinstall ds=nocloud-net\\;s=http://{{.HTTPIP}}:{{.HTTPPort}}/ ",
-    "<enter><wait3s>",
-    "initrd /casper/initrd<enter><wait3s>",
-    "boot<enter>"
+    "e<wait>",
+    "<down><down><down>",
+    "<end><bs><bs><bs><bs><wait>",
+    "autoinstall ds=nocloud-net\\;s=http://{{.HTTPIP}}:{{.HTTPPort}}/ ---<wait>",
+    "<f10><wait>"
   ]
 
-  ssh_username = var.ssh_username
-  ssh_password = var.ssh_password
-  ssh_timeout  = "40m"
+  ssh_username           = var.ssh_username
+  ssh_password           = var.ssh_password
+  ssh_timeout            = "60m"
+  ssh_handshake_attempts = 420
 
   shutdown_command = "echo '${var.ssh_password}' | sudo -S shutdown -P now"
   shutdown_timeout = "15m"
