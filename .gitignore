@@ -1,0 +1,11 @@
+# Output build Packer (OVA, VDI, log) - jangan commit, diambil dari GitHub Actions artifact
+output/
+packer_cache/
+*.ova
+*.log
+crash.log
+
+# Editor/OS
+.DS_Store
+.vscode/
+.idea/

@@ -1,0 +1,87 @@
+name: Build NusaLog Lab OVA
+
+on:
+  workflow_dispatch:
+    inputs:
+      vm_name:
+        description: "Nama VM / prefix output OVA"
+        required: false
+        default: "nusalog-lab"
+  # Sengaja TIDAK auto-trigger di push - build ini berat (bisa 20-40+ menit
+  # dan memakai banyak Actions minutes). Aktifkan manual dulu lewat
+  # workflow_dispatch sampai pipeline terbukti stabil, baru pertimbangkan
+  # menambahkan trigger `push` dengan `paths:` filter.
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free disk space on runner
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: false
+
+      - name: Ensure VirtualBox is available
+        run: |
+          if command -v VBoxManage >/dev/null 2>&1; then
+            echo "VirtualBox sudah tersedia di runner:"
+            VBoxManage --version
+          else
+            echo "VirtualBox tidak ditemukan di image runner, mencoba install via apt..."
+            sudo apt-get update
+            sudo apt-get install -y virtualbox
+            VBoxManage --version
+          fi
+          # Titik risiko infra terbesar di seluruh pipeline: modul kernel
+          # vboxdrv harus berhasil dimuat di kernel runner GitHub-hosted.
+          # Jika langkah berikut gagal, lihat catatan fallback di README.md.
+          sudo modprobe vboxdrv || echo "PERINGATAN: modprobe vboxdrv gagal - build kemungkinan akan gagal di step packer build."
+
+      - name: Install Packer
+        uses: hashicorp/setup-packer@main
+        with:
+          version: "1.16.0"
+
+      - name: Packer init
+        run: packer init packer/
+
+      - name: Packer validate
+        run: packer validate packer/
+
+      - name: Packer build
+        run: |
+          packer build \
+            -var "vm_name=${{ inputs.vm_name || 'nusalog-lab' }}" \
+            packer/
+
+      - name: Checksum & size of output OVA
+        id: artifact_info
+        run: |
+          OVA_PATH=$(find output -name '*.ova' | head -n1)
+          echo "path=$OVA_PATH" >> "$GITHUB_OUTPUT"
+          echo "## Hasil Build OVA" >> "$GITHUB_STEP_SUMMARY"
+          echo "- File: $OVA_PATH" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Ukuran: $(du -h "$OVA_PATH" | cut -f1)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- SHA256: $(sha256sum "$OVA_PATH" | cut -d' ' -f1)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload OVA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nusalog-lab-ova
+          path: ${{ steps.artifact_info.outputs.path }}
+          retention-days: 14
+          if-no-files-found: error
+        # Catatan ukuran: OVA kemungkinan ~1.5-4GB. Jika mendekati/melebihi
+        # kuota storage Actions akun ini, pertimbangkan publish sebagai
+        # GitHub Release asset atau ke storage eksternal (S3/R2) - lihat
+        # README.md bagian "Distribusi OVA".

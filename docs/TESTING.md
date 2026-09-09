@@ -1,0 +1,81 @@
+# Rencana & Status Pengujian
+
+## Sudah Diverifikasi (lokal, tanpa VirtualBox)
+
+Semua item di bawah sudah benar-benar dijalankan dan dikonfirmasi berhasil
+selama pengembangan lab ini (bukan sekadar asumsi teoretis):
+
+- [x] `packer fmt -check` + `packer validate packer/` -> **valid**.
+- [x] `bash -n` seluruh `packer/scripts/*.sh` -> **tidak ada error sintaks**.
+- [x] YAML `packer/http/user-data` (autoinstall) di-parse dengan `python3 -c "import yaml..."` -> **valid**.
+- [x] YAML `.github/workflows/build-ova.yml` -> **valid**.
+- [x] **Aplikasi PHP dijalankan langsung** (`php -S` + MySQL Docker) dan lewat
+      **`docker/Dockerfile.dev`** (Apache+PHP+MySQL asli via `service`, bukan
+      systemctl) - end-to-end, seluruh rantai eksploitasi dikonfirmasi jalan:
+  - [x] IDOR di `track.php?tracking_id=100013` membocorkan `internal_remarks`.
+  - [x] Payload SQLi naif (`' OR 1=1 --`, `' OR '1'='1`, `admin'-- `) **gagal**
+        dibendung filter (sesuai desain - tidak boleh terlalu mudah).
+  - [x] Payload nested-keyword (`SelSELECTect`, `UNIunionON`) **berhasil**
+        bypass filter dan dikonfirmasi lewat `search.php` (union data leak) dan
+        `staff-x7k2/login.php` (auth bypass, HTTP 302 ke dashboard sebagai admin).
+  - [x] Command injection di `courier-check.php` mengeksekusi `id`/`whoami`,
+        dan pada harness Apache+PHP-FPM asli terbukti berjalan sebagai
+        `uid=33(www-data)` - bukan root, sesuai desain (perlu privesc lanjutan).
+  - [x] Privesc `sudo NOPASSWD` pada `/usr/bin/less` diuji terpisah di container
+        Ubuntu 22.04 bersih (simulasi pty via `script`) - shell escape `!/bin/sh`
+        terbukti menghasilkan `uid=0(root)`.
+  - [x] `dashboard.php` (login customer resmi) terbukti ter-scope dengan benar
+        (hanya menampilkan shipment milik sendiri, tanpa `internal_remarks`) -
+        kontras yang disengaja dengan IDOR di `track.php`.
+
+## Belum Bisa Diverifikasi di Lokal (butuh CI / OVA nyata)
+
+- [ ] Timing `boot_command` GRUB terhadap ISO Ubuntu 22.04.5 asli - **risiko
+      paling tinggi**, kemungkinan perlu iterasi setelah run CI pertama.
+- [ ] Ketersediaan VirtualBox + modul kernel `vboxdrv` di runner GitHub Actions
+      `ubuntu-latest` (workflow sudah menyertakan fallback `apt-get install
+      virtualbox`, tapi baru terbukti benar setelah dijalankan).
+- [ ] Proses export OVA oleh VirtualBox (`format = "ova"`).
+- [ ] Ukuran akhir file OVA (perkiraan 1.5-4GB, akan tercatat di job summary
+      workflow setelah build pertama berhasil).
+
+## Checklist Akhir Manual (setelah OVA diunduh dari GitHub Actions artifact)
+
+Wajib dilakukan sebelum lab dianggap siap dipakai peserta:
+
+1. [ ] Import OVA ke VirtualBox (idealnya sekali di Windows, sekali di macOS/Linux)
+       tanpa error/warning yang mengkhawatirkan.
+2. [ ] VM boot sampai login prompt tanpa perlu campur tangan manual.
+3. [ ] `nmap -p- <ip-vm>` dari host menunjukkan **persis** dua port terbuka:
+       22 dan port aplikasi (default 8082) - tidak lebih.
+4. [ ] `nmap -p- --top-ports 1000` (scan default) **tidak** menampilkan port
+       aplikasi - konfirmasi bahwa port memang di luar daftar top-1000, memaksa
+       full port scan (`-p-`).
+5. [ ] Walkthrough manual seluruh rantai di `docs/VULNERABILITIES.md` #1-#4
+       terhadap VM yang benar-benar hidup (bukan Docker harness) - dari recon
+       sampai root shell.
+6. [ ] Reboot VM sekali, pastikan semua service (Apache, MySQL, sudoers rule)
+       tetap aktif otomatis setelah boot ulang.
+7. [ ] Cek SSH host key & `/etc/machine-id` unik per instance jika lab
+       di-deploy ke banyak peserta sekaligus (clone dari OVA yang sama).
+
+## Cara Iterasi Cepat Tanpa VirtualBox
+
+```bash
+# 1. Jalankan MySQL + PHP langsung (paling cepat, untuk logic PHP/SQLi)
+docker run -d --name nusalog-mysql -e MYSQL_ROOT_PASSWORD=rootpw \
+  -e MYSQL_DATABASE=nusalog -p 33061:3306 mysql:8.0
+docker exec -i nusalog-mysql mysql -uroot -prootpw < app/sql/schema.sql
+docker exec -i nusalog-mysql mysql -uroot -prootpw < app/sql/seed.sql
+NUSALOG_DB_HOST=127.0.0.1 NUSALOG_DB_PORT=33061 NUSALOG_DB_USER=root \
+NUSALOG_DB_PASS=rootpw php -S 127.0.0.1:8091 -t app/www
+
+# 2. Atau simulasi provisioning penuh (Apache+PHP+MySQL+sudoers) lewat Docker
+docker build -t nusalog-dev -f docker/Dockerfile.dev .
+docker run --rm -p 8082:8082 nusalog-dev
+```
+
+Baru setelah logic PHP dan provisioning script terbukti benar lewat cara di
+atas, jalankan `packer build` di GitHub Actions (`workflow_dispatch` di tab
+Actions) - proses ini memakan waktu dan Actions minutes, jadi diperlakukan
+sebagai checkpoint integrasi yang mahal, bukan loop iterasi utama.

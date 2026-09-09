@@ -1,0 +1,54 @@
+# Harness pengujian lokal (BUKAN untuk di-ship / bukan bagian dari OVA).
+#
+# Mensimulasikan sebagian besar langkah provisioning (install paket, vhost
+# Apache, import database, aturan sudoers) di dalam container biasa - tanpa
+# systemd, tanpa Packer, tanpa VirtualBox - supaya bisa diiterasi cepat di
+# Mac manapun sebelum menghabiskan waktu build OVA yang sesungguhnya di CI.
+#
+# Catatan: container ini memakai `service ...` (bukan `systemctl`, yang
+# butuh systemd sebagai PID 1) dan TIDAK menjalankan ufw (firewall kernel
+# tidak relevan di dalam container). Ini hanya untuk sanity-check paket +
+# konfigurasi + kode aplikasi, bukan pengganti pengujian OVA yang sebenarnya.
+#
+# Build & jalankan:
+#   docker build -t nusalog-dev -f docker/Dockerfile.dev .
+#   docker run --rm -p 8082:8082 nusalog-dev
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV APP_PORT=8082
+
+RUN apt-get update && apt-get install -y \
+      apache2 php php-mysql php-mbstring libapache2-mod-php \
+      mysql-server sudo less curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY app/www /tmp/app-src
+COPY app/sql /tmp/sql
+COPY packer/scripts/06-configure-sudo-misconfig.sh /tmp/06-configure-sudo-misconfig.sh
+
+# --- Setara 03-deploy-app.sh (tanpa systemctl) ---
+RUN rm -rf /var/www/nusalog && mkdir -p /var/www/nusalog \
+    && cp -r /tmp/app-src/. /var/www/nusalog/ \
+    && chown -R www-data:www-data /var/www/nusalog \
+    && find /var/www/nusalog -type d -exec chmod 755 {} \; \
+    && find /var/www/nusalog -type f -exec chmod 644 {} \;
+
+RUN echo "Listen ${APP_PORT}" >> /etc/apache2/ports.conf \
+    && printf '<VirtualHost *:%s>\n    ServerName nusalog.local\n    DocumentRoot /var/www/nusalog\n    <Directory /var/www/nusalog>\n        Options -Indexes -FollowSymLinks\n        AllowOverride None\n        Require all granted\n    </Directory>\n</VirtualHost>\n' "${APP_PORT}" > /etc/apache2/sites-available/nusalog.conf \
+    && a2dissite 000-default \
+    && a2ensite nusalog
+
+# --- Setara 06-configure-sudo-misconfig.sh ---
+RUN bash /tmp/06-configure-sudo-misconfig.sh
+
+EXPOSE 8082
+
+# --- Setara 04-configure-mysql.sh (mysqld dinyalakan manual, bukan via systemctl) ---
+CMD service mysql start \
+    && chmod 755 /var/run/mysqld \
+    && mysql -uroot -e "SOURCE /tmp/sql/schema.sql; SOURCE /tmp/sql/seed.sql; \
+         CREATE USER IF NOT EXISTS 'nusalog_app'@'localhost' IDENTIFIED BY 'N0nAdm1nApp!23'; \
+         GRANT SELECT, INSERT, UPDATE ON nusalog.* TO 'nusalog_app'@'localhost'; FLUSH PRIVILEGES;" \
+    && service apache2 start \
+    && tail -f /var/log/apache2/*.log
