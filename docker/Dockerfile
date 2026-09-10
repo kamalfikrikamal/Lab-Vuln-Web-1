@@ -1,22 +1,14 @@
-# Harness pengujian lokal (BUKAN untuk di-ship / bukan bagian dari OVA).
+# Image deployment lab NusaLog: Apache+PHP+MySQL+sudo misconfig dalam satu
+# container - tanpa systemd (memakai `service ...`), tanpa Packer/VPS
+# provisioning terpisah.
 #
-# Mensimulasikan sebagian besar langkah provisioning (install paket, vhost
-# Apache, import database, aturan sudoers) di dalam container biasa - tanpa
-# systemd, tanpa Packer, tanpa VirtualBox - supaya bisa diiterasi cepat di
-# Mac manapun sebelum menghabiskan waktu build OVA yang sesungguhnya di CI.
-#
-# Catatan: container ini memakai `service ...` (bukan `systemctl`, yang
-# butuh systemd sebagai PID 1) dan TIDAK menjalankan ufw (firewall kernel
-# tidak relevan di dalam container). Ini hanya untuk sanity-check paket +
-# konfigurasi + kode aplikasi, bukan pengganti pengujian OVA yang sebenarnya.
-#
-# Build & jalankan:
-#   docker build -t nusalog-dev -f docker/Dockerfile.dev .
-#   docker run --rm -p 8082:8082 nusalog-dev
+# Jalankan (dari root repo, di VPS mana pun yang sudah punya Docker):
+#   docker compose up -d --build
+# Aplikasi lalu bisa diakses di http://<ip-vps>:8095
 FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
-ENV APP_PORT=8082
+ENV APP_PORT=8095
 
 RUN apt-get update && apt-get install -y \
       apache2 php php-mysql php-mbstring libapache2-mod-php \
@@ -25,9 +17,7 @@ RUN apt-get update && apt-get install -y \
 
 COPY app/www /tmp/app-src
 COPY app/sql /tmp/sql
-COPY packer/scripts/06-configure-sudo-misconfig.sh /tmp/06-configure-sudo-misconfig.sh
 
-# --- Setara 03-deploy-app.sh (tanpa systemctl) ---
 RUN rm -rf /var/www/nusalog && mkdir -p /var/www/nusalog \
     && cp -r /tmp/app-src/. /var/www/nusalog/ \
     && chown -R www-data:www-data /var/www/nusalog \
@@ -39,12 +29,25 @@ RUN echo "Listen ${APP_PORT}" >> /etc/apache2/ports.conf \
     && a2dissite 000-default \
     && a2ensite nusalog
 
-# --- Setara 06-configure-sudo-misconfig.sh ---
-RUN bash /tmp/06-configure-sudo-misconfig.sh
+# VULNERABILITAS (privesc www-data -> root): rule sudo ini dimaksudkan agar
+# aplikasi/staff bisa meninjau log Apache tanpa akses root penuh. Masalahnya,
+# /usr/bin/less punya fitur shell-escape bawaan ("!perintah" atau "!/bin/sh"
+# saat sedang membuka file lewat pager) yang tidak dibatasi oleh sudo -
+# sehingga siapa pun yang mendapat shell sebagai www-data bisa memakai rule
+# ini untuk mendapatkan shell root (lihat GTFOBins: less).
+RUN echo 'www-data ALL=(root) NOPASSWD: /usr/bin/less /var/log/apache2/*.log' > /etc/sudoers.d/www-data-logs \
+    && chmod 0440 /etc/sudoers.d/www-data-logs \
+    && visudo -c -f /etc/sudoers.d/www-data-logs
 
-EXPOSE 8082
+# Flag bukti keberhasilan privilege escalation ke root. Diletakkan langsung
+# di home root (bukan disembunyikan/di-hide) agar peserta yang sudah berhasil
+# eksploitasi rantai kerentanan tidak perlu mencarinya lagi.
+RUN echo "NUSALOG{r00t_via_l3ss_gtf0bins_sudo_misconfig}" > /root/flag.txt \
+    && chmod 0400 /root/flag.txt \
+    && chown root:root /root/flag.txt
 
-# --- Setara 04-configure-mysql.sh (mysqld dinyalakan manual, bukan via systemctl) ---
+EXPOSE 8095
+
 CMD service mysql start \
     && chmod 755 /var/run/mysqld \
     && mysql -uroot -e "SOURCE /tmp/sql/schema.sql; SOURCE /tmp/sql/seed.sql; \

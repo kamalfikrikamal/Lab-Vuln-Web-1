@@ -1,6 +1,6 @@
 # Kunci Jawaban Instruktur - Lab NusaLog
 
-> **Dokumen ini TIDAK ikut di-deploy ke dalam OVA.** Hanya untuk instruktur/penilai.
+> **Dokumen ini TIDAK ikut di-deploy ke VPS/aplikasi.** Hanya untuk instruktur/penilai.
 > Semua payload di bawah sudah diuji end-to-end (lihat `docs/TESTING.md`) terhadap
 > stack Apache+PHP+MySQL yang identik dengan yang dipasang provisioning scripts.
 
@@ -132,11 +132,11 @@ sudo -l
 ```
 Menampilkan:
 ```
-User www-data may run the following commands on nusalog-srv:
+User www-data may run the following commands on <container-id>:
     (root) NOPASSWD: /usr/bin/less /var/log/apache2/*.log
 ```
 Rule ini dipasang lewat `/etc/sudoers.d/www-data-logs` (narasi: staf perlu
-meninjau log Apache tanpa akses root penuh - lihat `packer/scripts/06-configure-sudo-misconfig.sh`).
+meninjau log Apache tanpa akses root penuh - lihat `docker/Dockerfile`).
 
 **Eksploitasi (teknik GTFOBins standar untuk `less`):**
 ```
@@ -149,6 +149,12 @@ Di dalam pager, ketik:
 Ini akan membuka shell yang berjalan sebagai **root** (`less` mewarisi hak sudo
 saat menjalankan shell-escape bawaannya). Sudah diverifikasi lewat simulasi pty
 (`script`) yang mengembalikan `uid=0(root) gid=0(root) groups=0(root)`.
+
+**Flag pembuktian:** `/root/flag.txt` (dibuat lewat `docker/Dockerfile`,
+langsung terlihat di `ls /root/` begitu peserta mendapat shell root - tidak perlu dicari):
+```
+NUSALOG{r00t_via_l3ss_gtf0bins_sudo_misconfig}
+```
 
 ---
 

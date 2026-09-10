@@ -1,0 +1,8 @@
+services:
+  nusalog:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    ports:
+      - "8095:8095"
+    restart: unless-stopped
